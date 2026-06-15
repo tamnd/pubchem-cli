@@ -7,8 +7,7 @@ import (
 )
 
 // These tests are offline: they exercise the URI driver's pure string functions
-// and the host wiring (mint, body, resolve), which need no network. The client's
-// HTTP behaviour is covered in pubchem_test.go.
+// and the host wiring (mint, body, resolve). No network calls.
 
 func TestDomainInfo(t *testing.T) {
 	info := Domain{}.Info()
@@ -25,9 +24,10 @@ func TestDomainInfo(t *testing.T) {
 
 func TestClassify(t *testing.T) {
 	cases := []struct{ in, typ, id string }{
-		{"wiki/Go", "page", "wiki/Go"},
-		{"/about/", "page", "about"},
-		{"https://" + Host + "/team/contact", "page", "team/contact"},
+		{"2244", "compound", "2244"},
+		{"aspirin", "compound", "aspirin"},
+		{"https://pubchem.ncbi.nlm.nih.gov/compound/2244", "compound", "2244"},
+		{"https://pubchem.ncbi.nlm.nih.gov/compound/aspirin", "compound", "aspirin"},
 	}
 	for _, tc := range cases {
 		typ, id, err := Domain{}.Classify(tc.in)
@@ -39,38 +39,50 @@ func TestClassify(t *testing.T) {
 }
 
 func TestLocate(t *testing.T) {
-	got, err := Domain{}.Locate("page", "wiki/Go")
-	want := "https://" + Host + "/wiki/Go"
-	if err != nil || got != want {
-		t.Errorf("Locate = (%q, %v), want (%q, nil)", got, err, want)
+	cases := []struct {
+		uriType string
+		id      string
+		want    string
+	}{
+		{"compound", "2244", "https://pubchem.ncbi.nlm.nih.gov/compound/2244"},
+		{"compound", "aspirin", "https://pubchem.ncbi.nlm.nih.gov/compound/aspirin"},
+		{"synonyms", "2244", "https://pubchem.ncbi.nlm.nih.gov/compound/2244#section=Synonyms"},
+	}
+	for _, tc := range cases {
+		got, err := Domain{}.Locate(tc.uriType, tc.id)
+		if err != nil || got != tc.want {
+			t.Errorf("Locate(%q, %q) = (%q, %v), want (%q, nil)",
+				tc.uriType, tc.id, got, err, tc.want)
+		}
 	}
 }
 
-// TestHostWiring mounts the driver in a kit Host (the runtime ant drives) and
-// checks the round trip: a record mints to its URI, its body is readable, and a
-// bare id resolves back to the same URI. The init in domain.go registers the
-// domain, so kit.Open finds it.
+func TestLocateUnknownType(t *testing.T) {
+	_, err := Domain{}.Locate("unknown", "foo")
+	if err == nil {
+		t.Error("expected error for unknown uriType, got nil")
+	}
+}
+
+// TestHostWiring mounts the driver in a kit Host and checks the round trip:
+// a Compound mints to its URI, resolve finds it again.
 func TestHostWiring(t *testing.T) {
 	h, err := kit.Open()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	p := &Page{ID: "wiki/Go", URL: "https://" + Host + "/wiki/Go", Title: "Go", Body: "Go is a language."}
-	u, err := h.Mint(p)
+	c := &Compound{CID: 2244, IUPACName: "2-acetyloxybenzoic acid", Formula: "C9H8O4"}
+	u, err := h.Mint(c)
 	if err != nil {
 		t.Fatalf("Mint: %v", err)
 	}
-	if want := "pubchem://page/wiki/Go"; u.String() != want {
+	if want := "pubchem://compound/2244"; u.String() != want {
 		t.Errorf("Mint = %q, want %q", u.String(), want)
 	}
 
-	if body, ok := h.Body(p); !ok || body == "" {
-		t.Errorf("Body = (%q, %v), want non-empty", body, ok)
-	}
-
-	got, err := h.ResolveOn("pubchem", "about")
-	if err != nil || got.String() != "pubchem://page/about" {
-		t.Errorf("ResolveOn = (%q, %v), want pubchem://page/about", got.String(), err)
+	got, err := h.ResolveOn("pubchem", "2244")
+	if err != nil || got.String() != "pubchem://compound/2244" {
+		t.Errorf("ResolveOn = (%q, %v), want pubchem://compound/2244", got.String(), err)
 	}
 }
